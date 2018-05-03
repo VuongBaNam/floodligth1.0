@@ -61,7 +61,7 @@ public class StatisticsCollector implements IFloodlightModule, IStatisticsServic
 	private static final HashMap<NodePortTuple, SwitchPortBandwidth> tentativePortStats = new HashMap<NodePortTuple, SwitchPortBandwidth>();
 
 	public static final int iterationNumber = 20;
-	private Map<Long,Item> matrix = new HashMap<Long,Item>();
+	private Map<DatapathId,Item> matrix = new HashMap<DatapathId,Item>();
 	private SelfOrganizingMap som;
 
 	int dem = 1;
@@ -100,8 +100,14 @@ public class StatisticsCollector implements IFloodlightModule, IStatisticsServic
 					}
 				}
 				Item item = new Item();
-
-				matrix.put(e.getKey().getLong(),)
+				item.setAttribute(Parameters.BYTE_COUNT.toString(),numberByte);
+				item.setAttribute(Parameters.PACKET_COUNT.toString(),numberPacket);
+				matrix.put(e.getKey(),item);
+			}
+			System.out.println("Datapath ID \t byte_count \t packet count");
+			for(Map.Entry<DatapathId, Item> e : matrix.entrySet()){
+				System.out.println(e.getKey() +"\t"+e.getValue().getFieldValue(Parameters.BYTE_COUNT.toString())
+						+"\t"+e.getValue().getFieldValue(Parameters.PACKET_COUNT.toString()));
 			}
 		}
 	}
