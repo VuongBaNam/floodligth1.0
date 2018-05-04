@@ -62,8 +62,9 @@ public class StatisticsCollector implements IFloodlightModule, IStatisticsServic
 
 	public static final int iterationNumber = 20;
 	private Map<DatapathId,Item> matrix = new HashMap<DatapathId,Item>();
-	private List<Item> list1 = new ArrayList<>();
-	private List<Item> list2 = new ArrayList<>();
+	private Map<DatapathId,List<Item>> listFlow1 = new HashMap<DatapathId,List<Item>>();
+	private Map<DatapathId,List<Item>> listFlow2 = new HashMap<DatapathId,List<Item>>();
+
 	private SelfOrganizingMap som;
 
 	int dem = 1;
@@ -131,18 +132,30 @@ public class StatisticsCollector implements IFloodlightModule, IStatisticsServic
 
 		@Override
 		public void run() {
+			System.out.println(dem);
+			dem++;
+			List<Item> list1 = new ArrayList<>();
+			List<Item> list2 = new ArrayList<>();
 			Map<DatapathId, List<OFStatsReply>> replies = getSwitchStatistics(switchService.getAllSwitchDpids(),OFStatsType.FLOW);
 			for (Map.Entry<DatapathId, List<OFStatsReply>> e : replies.entrySet()) {
 				long numberByte = 0;
 				long numberPacket = 0;
+
+				if(listFlow1.get(e.getKey()) != null){
+					list1 = listFlow1.get(e.getKey());
+					list2 = listFlow2.get(e.getKey());
+				}
+
 				for (OFStatsReply r : e.getValue()) {
 					OFFlowStatsReply fsr = (OFFlowStatsReply) r;
 					for (OFFlowStatsEntry fse : fsr.getEntries()) {
+						if (fse.getMatch().get(MatchField.ETH_TYPE) == EthType.ARP) continue;
 						Item flowEntry = createItem(fse);
+						System.out.println(e.getKey()+"\t"+flowEntry.getFieldValue(Flow.IP_SRC.toString()) +"\t"+flowEntry.getFieldValue(Flow.IP_DST.toString()));
 						list2.add(flowEntry);
 						if(list1.isEmpty()) {
 							numberByte += fse.getByteCount().getValue();
-							numberPacket += fse.getByteCount().getValue();
+							numberPacket += fse.getPacketCount().getValue();
 						}else {
 							Item i = getItem(list1,flowEntry);
 							if(i == null){
@@ -168,6 +181,8 @@ public class StatisticsCollector implements IFloodlightModule, IStatisticsServic
 				item.setAttribute(Parameters.BYTE_COUNT.toString(),numberByte);
 				item.setAttribute(Parameters.PACKET_COUNT.toString(),numberPacket);
 				matrix.put(e.getKey(),item);
+				listFlow1.put(e.getKey(),list1);
+				listFlow2.put(e.getKey(),list2);
 			}
 			System.out.println("Datapath ID \t byte_count \t packet count");
 			for(Map.Entry<DatapathId, Item> e : matrix.entrySet()){
@@ -322,8 +337,7 @@ public class StatisticsCollector implements IFloodlightModule, IStatisticsServic
 	 */
 	private void startStatisticsCollection() {
 		//portStatsCollector = threadPoolService.getScheduledExecutor().scheduleAtFixedRate(new PortStatsCollector(), 5, 5, TimeUnit.SECONDS);
-		//flowStatsCollector = threadPoolService.getScheduledExecutor().scheduleAtFixedRate(new FlowStatsCollector(), 2, 2, TimeUnit.SECONDS);
-		//flowStatsCollector = threadPoolService.getScheduledExecutor().scheduleAtFixedRate(new FlowStatsCollector(), 5, 5, TimeUnit.SECONDS);
+		flowStatsCollector = threadPoolService.getScheduledExecutor().scheduleAtFixedRate(new FlowStatsCollector(), 2, 2, TimeUnit.SECONDS);
 		tentativePortStats.clear(); /* must clear out, otherwise might have huge BW result if present and wait a long time before re-enabling stats */
 		log.warn("Statistics collection thread(s) started");
 	}
