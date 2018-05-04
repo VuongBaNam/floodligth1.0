@@ -62,6 +62,8 @@ public class StatisticsCollector implements IFloodlightModule, IStatisticsServic
 
 	public static final int iterationNumber = 20;
 	private Map<DatapathId,Item> matrix = new HashMap<DatapathId,Item>();
+	private List<Item> list1 = new ArrayList<>();
+	private List<Item> list2 = new ArrayList<>();
 	private SelfOrganizingMap som;
 
 	int dem = 1;
@@ -86,6 +88,47 @@ public class StatisticsCollector implements IFloodlightModule, IStatisticsServic
 	 */
 	private class FlowStatsCollector implements Runnable{
 
+		public Item createItem(OFFlowStatsEntry fse){
+			Item item = new Item();
+			Match match = fse.getMatch();
+
+			item.setAttribute(Flow.IP_SRC.toString(),match.get(MatchField.IPV4_SRC));
+			item.setAttribute(Flow.IP_DST.toString(),match.get(MatchField.IPV4_DST));
+			if(match.get(MatchField.IP_PROTO) == null){
+				item.setAttribute(Flow.PORT_SRC.toString(),TransportPort.NONE);
+				item.setAttribute(Flow.PORT_DST.toString(),TransportPort.NONE);
+			}else if (match.get(MatchField.IP_PROTO).equals(IpProtocol.TCP)){
+				item.setAttribute(Flow.PORT_SRC.toString(), match.get(MatchField.TCP_SRC));
+				item.setAttribute(Flow.PORT_DST.toString(), match.get(MatchField.TCP_DST));
+			}else{
+				item.setAttribute(Flow.PORT_SRC.toString(), match.get(MatchField.UDP_SRC));
+				item.setAttribute(Flow.PORT_DST.toString(), match.get(MatchField.UDP_DST));
+			}
+			item.setAttribute(Flow.NUMBER_PKT.toString(),fse.getPacketCount());
+			item.setAttribute(Flow.TOATAL_BYTE.toString(),fse.getByteCount());
+
+			return item;
+		}
+
+		public Item getItem(List<Item> list , Item item){
+			for(Item i : list){
+				if(compareFlow(i,item)){
+					return i;
+				}
+			}
+			return null;
+		}
+
+		public boolean compareFlow(Item flow1,Item flow2){
+			if(flow1.getFieldValue(Flow.IP_SRC.toString()).equals(flow2.getFieldValue(Flow.IP_SRC.toString()))
+					&& flow1.getFieldValue(Flow.IP_DST.toString()).equals(flow2.getFieldValue(Flow.IP_DST.toString()))
+					&& flow1.getFieldValue(Flow.PORT_SRC.toString()).equals(flow2.getFieldValue(Flow.PORT_SRC.toString()))
+					&& flow1.getFieldValue(Flow.PORT_DST.toString()).equals(flow2.getFieldValue(Flow.PORT_DST.toString()))){
+				return true;
+			}else
+				return false;
+		}
+
 		@Override
 		public void run() {
 			Map<DatapathId, List<OFStatsReply>> replies = getSwitchStatistics(switchService.getAllSwitchDpids(),OFStatsType.FLOW);
@@ -95,10 +138,32 @@ public class StatisticsCollector implements IFloodlightModule, IStatisticsServic
 				for (OFStatsReply r : e.getValue()) {
 					OFFlowStatsReply fsr = (OFFlowStatsReply) r;
 					for (OFFlowStatsEntry fse : fsr.getEntries()) {
-						numberByte += fse.getByteCount().getValue();
-						numberPacket += fse.getByteCount().getValue();
+						Item flowEntry = createItem(fse);
+						list2.add(flowEntry);
+						if(list1.isEmpty()) {
+							numberByte += fse.getByteCount().getValue();
+							numberPacket += fse.getByteCount().getValue();
+						}else {
+							Item i = getItem(list1,flowEntry);
+							if(i == null){
+								U64 total_byte = (U64)flowEntry.getFieldValue(Flow.TOATAL_BYTE.toString());
+								U64 total_pkt = (U64)flowEntry.getFieldValue(Flow.NUMBER_PKT.toString());
+								numberPacket += total_pkt.getValue();
+								numberByte += total_byte.getValue();
+							}else{
+								U64 total_b = (U64)flowEntry.getFieldValue(Flow.TOATAL_BYTE.toString());
+								U64 total_p = (U64)flowEntry.getFieldValue(Flow.NUMBER_PKT.toString());
+								U64 total_byte = (U64)i.getFieldValue(Flow.TOATAL_BYTE.toString());
+								U64 total_pkt = (U64)i.getFieldValue(Flow.NUMBER_PKT.toString());
+								numberPacket += total_p.getValue() - total_pkt.getValue();
+								numberByte += total_b.getValue() - total_byte.getValue();
+							}
+						}
 					}
 				}
+				list1.clear();
+				list1 = new ArrayList<>(list2);
+				list2.clear();
 				Item item = new Item();
 				item.setAttribute(Parameters.BYTE_COUNT.toString(),numberByte);
 				item.setAttribute(Parameters.PACKET_COUNT.toString(),numberPacket);
