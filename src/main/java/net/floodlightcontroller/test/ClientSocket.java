@@ -156,7 +156,7 @@ public class ClientSocket implements IFloodlightModule {
                     .setExact(MatchField.UDP_SRC,TransportPort.of(53))
                     .build();
             List<OFAction> actions = new ArrayList<OFAction>(); // set no action to drop
-            fmb.setMatch(match).setIdleTimeout(Forwarding.FLOWMOD_DEFAULT_IDLE_TIMEOUT);
+            fmb.setMatch(match).setIdleTimeout(Forwarding.FLOWMOD_DEFAULT_IDLE_TIMEOUT).setPriority(1000);
 
             FlowModUtils.setActions(fmb, actions, sw);
 
