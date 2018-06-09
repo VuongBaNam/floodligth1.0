@@ -261,14 +261,6 @@ public class StatisticsCollector implements IFloodlightModule, IStatisticsServic
 		switchService = context.getServiceImpl(IOFSwitchService.class);
 		threadPoolService = context.getServiceImpl(IThreadPoolService.class);
 		restApiService = context.getServiceImpl(IRestApiService.class);
-		SampleVectorInterface sampleVectorInterface = null;
-		try {
-			sampleVectorInterface = new SampleVectorFile("D:\\normalizedFeature.csv");
-			som = new SelfOrganizingMap(iterationNumber,sampleVectorInterface);
-			som.startLearn(30,30);
-		} catch (SOMException e) {
-			e.printStackTrace();
-		}
 
 //		client = new Socket("localhost",9999);
 
@@ -337,7 +329,7 @@ public class StatisticsCollector implements IFloodlightModule, IStatisticsServic
 	 */
 	private void startStatisticsCollection() {
 		//portStatsCollector = threadPoolService.getScheduledExecutor().scheduleAtFixedRate(new PortStatsCollector(), 5, 5, TimeUnit.SECONDS);
-		flowStatsCollector = threadPoolService.getScheduledExecutor().scheduleAtFixedRate(new FlowStatsCollector(), 2, 2, TimeUnit.SECONDS);
+		//flowStatsCollector = threadPoolService.getScheduledExecutor().scheduleAtFixedRate(new FlowStatsCollector(), 2, 2, TimeUnit.SECONDS);
 		tentativePortStats.clear(); /* must clear out, otherwise might have huge BW result if present and wait a long time before re-enabling stats */
 		log.warn("Statistics collection thread(s) started");
 	}

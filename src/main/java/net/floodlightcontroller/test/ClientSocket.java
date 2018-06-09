@@ -1,24 +1,30 @@
 package net.floodlightcontroller.test;
 
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.gson.Gson;
+import net.floodlightcontroller.OCSVM.DataPoint;
+import net.floodlightcontroller.OCSVM.OneclassSVM;
+import net.floodlightcontroller.accesscontrollist.ACLRule;
+import net.floodlightcontroller.accesscontrollist.IACLService;
 import net.floodlightcontroller.core.IOFSwitch;
 import net.floodlightcontroller.core.internal.IOFSwitchService;
 import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
+import net.floodlightcontroller.forwarding.Forwarding;
+import net.floodlightcontroller.fuzzy.Fuzzy;
 import net.floodlightcontroller.threadpool.IThreadPoolService;
+import net.floodlightcontroller.util.FlowModUtils;
 import org.projectfloodlight.openflow.protocol.*;
+import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.match.Match;
-import org.projectfloodlight.openflow.types.DatapathId;
-import org.projectfloodlight.openflow.types.OFPort;
-import org.projectfloodlight.openflow.types.TableId;
-import org.projectfloodlight.openflow.types.U64;
+import org.projectfloodlight.openflow.protocol.match.MatchField;
+import org.projectfloodlight.openflow.types.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.io.ObjectInputStream;
+import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.*;
@@ -26,11 +32,14 @@ import java.util.concurrent.TimeUnit;
 
 public class ClientSocket implements IFloodlightModule {
 
+    private boolean check = false;
     private static final Logger log = LoggerFactory.getLogger(ClientSocket.class);
-    private final static int DEFAULT_PORT = 9999;
+    private final static int DEFAULT_PORT = 5000;
     private static ServerSocket servSocket;
     private Socket socket;
-    private static IOFSwitchService switchService;
+    private Gson gson;
+    private IOFSwitchService switchService;
+    private IACLService iaclService;
 
     @Override
     public Collection<Class<? extends IFloodlightService>> getModuleServices() {
@@ -53,9 +62,11 @@ public class ClientSocket implements IFloodlightModule {
 
     @Override
     public void init(FloodlightModuleContext context) throws FloodlightModuleException, IOException {
+        gson = new Gson();
         servSocket = new ServerSocket(DEFAULT_PORT);
         switchService = context.getServiceImpl(IOFSwitchService.class);
-        System.out.println("Start server Socket");
+        iaclService = context.getServiceImpl(IACLService.class);
+        log.info("Start server Socket");
     }
 
     @Override
@@ -63,59 +74,144 @@ public class ClientSocket implements IFloodlightModule {
         while (true){
             try{
                 socket = servSocket.accept();
-               // communicate(socket);
+                communicate(socket);
             } catch (IOException e){
                 System.out.println(e.getMessage());
             }
         }
+
     }
     private void communicate(Socket connSocket) {
         try {
             ObjectInputStream in = new ObjectInputStream(connSocket.getInputStream());
 
-            double z;
+            byte[] data = new byte[1500];
             try {
-                while ((z = in.readDouble()) != -1) {
-                    System.out.println(z);
-                    sendFlowDeleteMessage(z);
+                while ((in.read(data)) != -1) {
+
+                    // X lý d liu đu vào đc gi t analyzer
+                    StringBuilder json = new StringBuilder();
+                    for(int i = 0;i < data.length;i++) {
+                        if(data[i] != 0){
+                            json.append(new Character((char)data[i]));
+                            if('}' == (char)data[i]){
+                                break;
+                            }
+                        }
+                    }
+                    System.out.println(json);
+                    if (json.toString().contains("null")) continue;
+                    DataModel dataModel = gson.fromJson(json.toString(),DataModel.class);
+
+                    //Module OCSVM và gii pháp dropICMP
+//                    OCSVM(dataModel.getTOTAL_PKT(),dataModel.getPKT_SIZE_AVG());
+
+                    //Module Fuzzy và gii pháp xóa z % flow u tiên flow có 1 packet
+//                    Fuzzy(dataModel.getPPF(),dataModel.getP_IAT());
+
+                    //Module DNS và gii pháp chn bn tin DNS response
+                    DNS(dataModel.getRATE_DNSRESPONE(),dataModel.getTOTAL_DNSRESPONE());
                 }
             } catch (IOException e) {
-                System.out.println("Cannot communicate to client!");
+                log.info("Cannot communicate to client!");
             }
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    public void sendFlowDeleteMessage(double z) {
+    private void DNS(double rateDNS,double totalDNS){
+        if(rateDNS > 0.5 || totalDNS > 6000){
+            log.info("Attack DNS");
+            doDropFlowDNS();
+        }
+    }
 
+    private void OCSVM(double numberOfPackets, double averageSize){
+        DataPoint dataPoint = new DataPoint(numberOfPackets,averageSize);
+        OneclassSVM oneclassSVM = new OneclassSVM();
+        double result = oneclassSVM.predict(dataPoint);
+        if(result > 0){
+            log.info("Normal");
+        }else {
+            doDropFlowICMP();
+            log.info("Abnormal");
+        }
+    }
+
+    private void Fuzzy(double PPF,double P_IAT){
+        double z = Fuzzy.FIS(PPF,P_IAT);
+        if(z > 0.95){
+            sendTableDeleteMessage();
+        }else{
+            sendFlowDeleteMessage(z);
+        }
+    }
+
+    private void doDropFlowDNS(){
+        for(DatapathId datapathId : switchService.getAllSwitchDpids()){
+            IOFSwitch sw = switchService.getSwitch(datapathId);
+            OFFlowMod.Builder fmb = sw.getOFFactory().buildFlowAdd();
+            Match match = sw.getOFFactory().buildMatch()
+                    .setExact(MatchField.UDP_SRC,TransportPort.of(53))
+                    .build();
+            List<OFAction> actions = new ArrayList<OFAction>(); // set no action to drop
+            fmb.setMatch(match).setIdleTimeout(Forwarding.FLOWMOD_DEFAULT_IDLE_TIMEOUT);
+
+            FlowModUtils.setActions(fmb, actions, sw);
+
+            sw.write(fmb.build());
+        }
+    }
+
+    private void doDropFlowICMP(){
+        for(DatapathId datapathId : switchService.getAllSwitchDpids()){
+            IOFSwitch sw = switchService.getSwitch(datapathId);
+            OFFlowMod.Builder fmb = sw.getOFFactory().buildFlowAdd();
+            Match match = sw.getOFFactory().buildMatch()
+                    .setExact(MatchField.ETH_TYPE, EthType.IPv4)
+                    .setExact(MatchField.IP_PROTO, IpProtocol.ICMP)
+                    .build();
+            List<OFAction> actions = new ArrayList<OFAction>(); // set no action to drop
+            fmb.setMatch(match).setIdleTimeout(Forwarding.FLOWMOD_DEFAULT_IDLE_TIMEOUT).setPriority(1000);
+
+            FlowModUtils.setActions(fmb, actions, sw);
+
+            sw.write(fmb.build());
+        }
+    }
+
+    private void sendTableDeleteMessage() {
+        Set<DatapathId> datapathIds = switchService.getAllSwitchDpids();
+        for(DatapathId datapathId : datapathIds) {
+            IOFSwitch sw = switchService.getSwitch(datapathId);
+
+            OFFlowDelete flowDelete = sw.getOFFactory().buildFlowDelete()
+                    .setOutPort(OFPort.ANY).build();
+            sw.write(flowDelete);
+        }
+    }
+
+    private void sendFlowDeleteMessage(double z) {
+        if(z == 0){
+            return;
+        }
         Map<DatapathId, List<OFStatsReply>> replies = getAllFlowStatistics(switchService.getAllSwitchDpids());
         int numberFlowDeleted = 0;
         int numberFlow = 0;
         for (Map.Entry<DatapathId, List<OFStatsReply>> e : replies.entrySet()) {
             for (OFStatsReply r : e.getValue()) {
-
-                List<Header> itemList = new ArrayList<Header>();
-
                 OFFlowStatsReply fsr = (OFFlowStatsReply) r;
                 List<OFFlowStatsEntry> list = fsr.getEntries();
-
-                for (OFFlowStatsEntry fse : list) {
-                    itemList.add(new Header(fse.getCookie(),fse.getPacketCount(),fse.getMatch()));
-                }
-                sort(itemList);
-                System.out.println("Sorted:");
+                sort(list);
                 numberFlow = list.size();
-                for (Header fse : itemList) {
-                    Match match = fse.getMacth();
-                    U64 cookie = fse.getCookie();
+                for (OFFlowStatsEntry fse : list) {
+                    Match match = fse.getMatch();
 
                     if(numberFlowDeleted*1.0/numberFlow < z){
                         IOFSwitch sw = switchService.getSwitch(e.getKey());
 
                         OFFlowDelete flowDelete = sw.getOFFactory().buildFlowDelete()
-                                .setCookie(cookie)
-                                .setTableId(TableId.ALL)
                                 .setOutPort(OFPort.ANY)
                                 .setMatch(match).build();
                         sw.write(flowDelete);
@@ -124,10 +220,9 @@ public class ClientSocket implements IFloodlightModule {
                 }
             }
         }
-        System.out.println("---------------------------------------------");
-        System.out.println(numberFlowDeleted +" "+ numberFlow);
     }
-    public void sort(List<Header> IP) {
+
+    private static void sort(List<OFFlowStatsEntry> IP) {
         int n = IP.size();
         for (int i = n / 2 - 1; i >= 0; i--) {
             heapify(IP, n, i);
@@ -135,34 +230,53 @@ public class ClientSocket implements IFloodlightModule {
 
         // Heap sort
         for (int i = n - 1; i >= 0; i--) {
-            Header temp = new Header(IP.get(0).getCookie(),IP.get(0).getPacket_count(),IP.get(0).getMacth());
-            IP.set(0,IP.get(i));
-            IP.set(i,temp);
+            OFFlowStatsEntry temp = IP.get(0);
+            OFFlowStatsEntry temp2 = IP.get(i);
+
+
+            OFFlowStatsEntry.Builder builder = IP.get(i).createBuilder();
+            builder.setCookie(temp.getCookie());
+            builder.setPacketCount(temp.getPacketCount());
+
+            OFFlowStatsEntry.Builder builder2 = IP.get(0).createBuilder();
+            builder2.setCookie(temp2.getCookie());
+            builder2.setPacketCount(temp2.getPacketCount());
+            builder.build();
+            builder2.build();
             // Heapify root element
             heapify( IP, i, 0);
         }
     }
 
-    public void heapify(List<Header> IP, int n,int i) {
+    private static void heapify(List<OFFlowStatsEntry> IP, int n,int i) {
         int largest = i;
         int l = 2 * i + 1; // ben trai
         int r = 2 * i + 2;  // ben phai
-        if (l < n && IP.get(l).getPacket_count().getValue() > IP.get(largest).getPacket_count().getValue()) {
+        if (l < n && IP.get(l).getPacketCount().getValue() > IP.get(largest).getPacketCount().getValue()) {
             largest = l;
         }
-        if (r < n && IP.get(r).getPacket_count().getValue() > IP.get(largest).getPacket_count().getValue()) {
+        if (r < n && IP.get(r).getPacketCount().getValue() > IP.get(largest).getPacketCount().getValue()) {
             largest = r;
         }
         if (largest != i) {
-            Header temp = new Header(IP.get(largest).getCookie(),IP.get(largest).getPacket_count(),IP.get(largest).getMacth());
-            IP.set(largest,IP.get(i));
-            IP.set(i,temp);
+            OFFlowStatsEntry temp = IP.get(largest);
+            OFFlowStatsEntry temp2 = IP.get(i);
+
+            OFFlowStatsEntry.Builder builder = IP.get(i).createBuilder();
+            builder.setCookie(temp.getCookie());
+            builder.setPacketCount(temp.getPacketCount());
+
+            OFFlowStatsEntry.Builder builder2 = IP.get(largest).createBuilder();
+            builder2.setCookie(temp2.getCookie());
+            builder2.setPacketCount(temp2.getPacketCount());
+            builder.build();
+            builder2.build();
 
             heapify(IP, n, largest);
         }
     }
 
-    Map<DatapathId, List<OFStatsReply>> getAllFlowStatistics(Set<DatapathId> dpids ){
+    private Map<DatapathId, List<OFStatsReply>> getAllFlowStatistics(Set<DatapathId> dpids ){
         Map<DatapathId, List<OFStatsReply>> map = new HashMap<>();
         for (DatapathId d : dpids) {
             List<OFStatsReply> list = getFlowStatistics(d);
