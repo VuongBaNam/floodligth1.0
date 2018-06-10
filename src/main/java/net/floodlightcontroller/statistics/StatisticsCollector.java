@@ -132,62 +132,88 @@ public class StatisticsCollector implements IFloodlightModule, IStatisticsServic
 
 		@Override
 		public void run() {
-			System.out.println(dem);
-			dem++;
-			List<Item> list1 = new ArrayList<>();
-			List<Item> list2 = new ArrayList<>();
+			sendFlowDeleteMessage();
+//			System.out.println(dem);
+//			dem++;
+//			List<Item> list1 = new ArrayList<>();
+//			List<Item> list2 = new ArrayList<>();
+//			Map<DatapathId, List<OFStatsReply>> replies = getSwitchStatistics(switchService.getAllSwitchDpids(),OFStatsType.FLOW);
+//			for (Map.Entry<DatapathId, List<OFStatsReply>> e : replies.entrySet()) {
+//				long numberByte = 0;
+//				long numberPacket = 0;
+//
+//				if(listFlow1.get(e.getKey()) != null){
+//					list1 = listFlow1.get(e.getKey());
+//					list2 = listFlow2.get(e.getKey());
+//				}
+//
+//				for (OFStatsReply r : e.getValue()) {
+//					OFFlowStatsReply fsr = (OFFlowStatsReply) r;
+//					for (OFFlowStatsEntry fse : fsr.getEntries()) {
+//						if (fse.getMatch().get(MatchField.ETH_TYPE) == EthType.ARP) continue;
+//						Item flowEntry = createItem(fse);
+//						System.out.println(e.getKey()+"\t"+flowEntry.getFieldValue(Flow.IP_SRC.toString()) +"\t"+flowEntry.getFieldValue(Flow.IP_DST.toString()));
+//						list2.add(flowEntry);
+//						if(list1.isEmpty()) {
+//							numberByte += fse.getByteCount().getValue();
+//							numberPacket += fse.getPacketCount().getValue();
+//						}else {
+//							Item i = getItem(list1,flowEntry);
+//							if(i == null){
+//								U64 total_byte = (U64)flowEntry.getFieldValue(Flow.TOATAL_BYTE.toString());
+//								U64 total_pkt = (U64)flowEntry.getFieldValue(Flow.NUMBER_PKT.toString());
+//								numberPacket += total_pkt.getValue();
+//								numberByte += total_byte.getValue();
+//							}else{
+//								U64 total_b = (U64)flowEntry.getFieldValue(Flow.TOATAL_BYTE.toString());
+//								U64 total_p = (U64)flowEntry.getFieldValue(Flow.NUMBER_PKT.toString());
+//								U64 total_byte = (U64)i.getFieldValue(Flow.TOATAL_BYTE.toString());
+//								U64 total_pkt = (U64)i.getFieldValue(Flow.NUMBER_PKT.toString());
+//								numberPacket += total_p.getValue() - total_pkt.getValue();
+//								numberByte += total_b.getValue() - total_byte.getValue();
+//							}
+//						}
+//					}
+//				}
+//				list1.clear();
+//				list1 = new ArrayList<>(list2);
+//				list2.clear();
+//				Item item = new Item();
+//				item.setAttribute(Parameters.BYTE_COUNT.toString(),numberByte);
+//				item.setAttribute(Parameters.PACKET_COUNT.toString(),numberPacket);
+//				matrix.put(e.getKey(),item);
+//				listFlow1.put(e.getKey(),list1);
+//				listFlow2.put(e.getKey(),list2);
+//			}
+//			System.out.println("Datapath ID \t byte_count \t packet count");
+//			for(Map.Entry<DatapathId, Item> e : matrix.entrySet()){
+//				System.out.println(e.getKey() +"\t"+e.getValue().getFieldValue(Parameters.BYTE_COUNT.toString())
+//						+"\t"+e.getValue().getFieldValue(Parameters.PACKET_COUNT.toString()));
+//			}
+		}
+		private void sendFlowDeleteMessage() {
 			Map<DatapathId, List<OFStatsReply>> replies = getSwitchStatistics(switchService.getAllSwitchDpids(),OFStatsType.FLOW);
+			int numberFlowDeleted = 0;
+			int numberFlow = 0;
 			for (Map.Entry<DatapathId, List<OFStatsReply>> e : replies.entrySet()) {
-				long numberByte = 0;
-				long numberPacket = 0;
-
-				if(listFlow1.get(e.getKey()) != null){
-					list1 = listFlow1.get(e.getKey());
-					list2 = listFlow2.get(e.getKey());
-				}
-
 				for (OFStatsReply r : e.getValue()) {
 					OFFlowStatsReply fsr = (OFFlowStatsReply) r;
-					for (OFFlowStatsEntry fse : fsr.getEntries()) {
-						if (fse.getMatch().get(MatchField.ETH_TYPE) == EthType.ARP) continue;
-						Item flowEntry = createItem(fse);
-						System.out.println(e.getKey()+"\t"+flowEntry.getFieldValue(Flow.IP_SRC.toString()) +"\t"+flowEntry.getFieldValue(Flow.IP_DST.toString()));
-						list2.add(flowEntry);
-						if(list1.isEmpty()) {
-							numberByte += fse.getByteCount().getValue();
-							numberPacket += fse.getPacketCount().getValue();
-						}else {
-							Item i = getItem(list1,flowEntry);
-							if(i == null){
-								U64 total_byte = (U64)flowEntry.getFieldValue(Flow.TOATAL_BYTE.toString());
-								U64 total_pkt = (U64)flowEntry.getFieldValue(Flow.NUMBER_PKT.toString());
-								numberPacket += total_pkt.getValue();
-								numberByte += total_byte.getValue();
-							}else{
-								U64 total_b = (U64)flowEntry.getFieldValue(Flow.TOATAL_BYTE.toString());
-								U64 total_p = (U64)flowEntry.getFieldValue(Flow.NUMBER_PKT.toString());
-								U64 total_byte = (U64)i.getFieldValue(Flow.TOATAL_BYTE.toString());
-								U64 total_pkt = (U64)i.getFieldValue(Flow.NUMBER_PKT.toString());
-								numberPacket += total_p.getValue() - total_pkt.getValue();
-								numberByte += total_b.getValue() - total_byte.getValue();
-							}
+					List<OFFlowStatsEntry> list = fsr.getEntries();
+					numberFlow = list.size();
+					for (OFFlowStatsEntry fse : list) {
+						Match match = fse.getMatch();
+
+						if(fse.getPacketCount().getValue() != 0){
+							IOFSwitch sw = switchService.getSwitch(e.getKey());
+
+							OFFlowDelete flowDelete = sw.getOFFactory().buildFlowDelete()
+									.setOutPort(OFPort.ANY)
+									.setMatch(match).build();
+							sw.write(flowDelete);
+							numberFlowDeleted++;
 						}
 					}
 				}
-				list1.clear();
-				list1 = new ArrayList<>(list2);
-				list2.clear();
-				Item item = new Item();
-				item.setAttribute(Parameters.BYTE_COUNT.toString(),numberByte);
-				item.setAttribute(Parameters.PACKET_COUNT.toString(),numberPacket);
-				matrix.put(e.getKey(),item);
-				listFlow1.put(e.getKey(),list1);
-				listFlow2.put(e.getKey(),list2);
-			}
-			System.out.println("Datapath ID \t byte_count \t packet count");
-			for(Map.Entry<DatapathId, Item> e : matrix.entrySet()){
-				System.out.println(e.getKey() +"\t"+e.getValue().getFieldValue(Parameters.BYTE_COUNT.toString())
-						+"\t"+e.getValue().getFieldValue(Parameters.PACKET_COUNT.toString()));
 			}
 		}
 	}

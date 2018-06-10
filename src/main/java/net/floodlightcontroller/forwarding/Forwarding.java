@@ -500,7 +500,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 
         /* Validate that the source and destination are not on the same switch port */
         if (sw.getId().equals(dstAp.getNodeId()) && srcPort.equals(dstAp.getPortId())) {
-            log.info("Both source and destination are on the same switch/port {}/{}. Dropping packet", sw.toString(), srcPort);
+            //log.info("Both source and destination are on the same switch/port {}/{}. Dropping packet", sw.toString(), srcPort);
             return;
         }			
 
@@ -631,9 +631,9 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
                     Integer.parseInt(sw.getSwitchDescription().getSoftwareDescription().toLowerCase().split("\\.")[0]) == 2 &&
                     Integer.parseInt(sw.getSwitchDescription().getSoftwareDescription().toLowerCase().split("\\.")[1]) >= 1 ))
                     ){
-	                    if(FLOWMOD_DEFAULT_MATCH_TCP_FLAG){
-	                        mb.setExact(MatchField.OVS_TCP_FLAGS, U16.of(tcp.getFlags()));
-	                    }
+//	                    if(FLOWMOD_DEFAULT_MATCH_TCP_FLAG){
+//	                        mb.setExact(MatchField.OVS_TCP_FLAGS, U16.of(tcp.getFlags()));
+//	                    }
                     }
                 } else if (ip.getProtocol().equals(IpProtocol.UDP)) {
                     UDP udp = (UDP) ip.getPayload();

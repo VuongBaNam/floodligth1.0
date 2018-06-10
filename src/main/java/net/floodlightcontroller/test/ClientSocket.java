@@ -104,13 +104,13 @@ public class ClientSocket implements IFloodlightModule {
                     DataModel dataModel = gson.fromJson(json.toString(),DataModel.class);
 
                     //Module OCSVM và gii pháp dropICMP
-//                    OCSVM(dataModel.getTOTAL_PKT(),dataModel.getPKT_SIZE_AVG());
+                    OCSVM(dataModel.getTOTAL_PKT(),dataModel.getPKT_SIZE_AVG());
 
                     //Module Fuzzy và gii pháp xóa z % flow u tiên flow có 1 packet
 //                    Fuzzy(dataModel.getPPF(),dataModel.getP_IAT());
 
-                    //Module DNS và gii pháp chn bn tin DNS response
-                    DNS(dataModel.getRATE_DNSRESPONE(),dataModel.getTOTAL_DNSRESPONE());
+//                    //Module DNS và gii pháp chn bn tin DNS response
+//                    DNS(dataModel.getRATE_DNSRESPONE(),dataModel.getTOTAL_DNSRESPONE());
                 }
             } catch (IOException e) {
                 log.info("Cannot communicate to client!");
@@ -134,7 +134,7 @@ public class ClientSocket implements IFloodlightModule {
         if(result > 0){
             log.info("Normal");
         }else {
-            doDropFlowICMP();
+            sendFlowDeleteMessage();
             log.info("Abnormal");
         }
     }
@@ -153,6 +153,8 @@ public class ClientSocket implements IFloodlightModule {
             IOFSwitch sw = switchService.getSwitch(datapathId);
             OFFlowMod.Builder fmb = sw.getOFFactory().buildFlowAdd();
             Match match = sw.getOFFactory().buildMatch()
+                    .setExact(MatchField.ETH_TYPE, EthType.IPv4)
+                    .setExact(MatchField.IP_PROTO,IpProtocol.UDP)
                     .setExact(MatchField.UDP_SRC,TransportPort.of(53))
                     .build();
             List<OFAction> actions = new ArrayList<OFAction>(); // set no action to drop
@@ -192,6 +194,35 @@ public class ClientSocket implements IFloodlightModule {
         }
     }
 
+    private void sendFlowDeleteMessage() {
+        Map<DatapathId, List<OFStatsReply>> replies = getAllFlowStatistics(switchService.getAllSwitchDpids());
+        int numberFlowDeleted = 0;
+        int numberFlow = 0;
+        for (Map.Entry<DatapathId, List<OFStatsReply>> e : replies.entrySet()) {
+            for (OFStatsReply r : e.getValue()) {
+                OFFlowStatsReply fsr = (OFFlowStatsReply) r;
+                List<OFFlowStatsEntry> list = fsr.getEntries();
+                sort(list);
+                for (OFFlowStatsEntry fse : list) {
+                    Match match = fse.getMatch();
+                    numberFlow++;
+
+                    if(fse.getPacketCount().getValue() <= 1){
+                        IOFSwitch sw = switchService.getSwitch(e.getKey());
+
+                        OFFlowDelete flowDelete = sw.getOFFactory().buildFlowDelete()
+                                .setOutPort(OFPort.ANY)
+                                .setMatch(match).build();
+                        sw.write(flowDelete);
+                        numberFlowDeleted++;
+                    }
+                }
+            }
+        }
+        System.out.println("======================");
+        System.out.println(numberFlowDeleted +"   "+numberFlow);
+    }
+
     private void sendFlowDeleteMessage(double z) {
         if(z == 0){
             return;
@@ -220,6 +251,8 @@ public class ClientSocket implements IFloodlightModule {
                 }
             }
         }
+        System.out.println("======================");
+        System.out.println(numberFlowDeleted +"   "+numberFlow);
     }
 
     private static void sort(List<OFFlowStatsEntry> IP) {
